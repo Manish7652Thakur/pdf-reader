@@ -1,55 +1,58 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
+
+function cosineSimilarity(a: number[], b: number[]): number {
+    let dot = 0, normA = 0, normB = 0;
+    for (let i = 0; i < a.length; i++) {
+        dot += a[i] * b[i];
+        normA += a[i] * a[i];
+        normB += b[i] * b[i];
+    }
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
 
 export async function POST(req: NextRequest) {
     try {
-        const formData = await req.formData();
-        const file = formData.get("file") as File;
-        const query = formData.get("query") as string;
+        const { documentId, query } = await req.json();
 
-        if (!file || !query) {
-            return NextResponse.json({ error: "File and query are required" }, { status: 400 });
+        if (!documentId || !query) {
+            return NextResponse.json({ error: "documentId and query are required" }, { status: 400 });
         }
 
-        const arrayBuffer = await file.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        // Call Gemini API via Langchain
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
-            return NextResponse.json({
-                answer: "System Error: Gemini API key is missing. Please add GEMINI_API_KEY to your .env.local file in the project root."
-            }, { status: 200 });
+            return NextResponse.json({ answer: "System Error: Gemini API key is missing." }, { status: 200 });
         }
 
-        const llm = new ChatGoogleGenerativeAI({
-            model: "gemini-2.5-flash",
-            maxOutputTokens: 2048,
-            apiKey: apiKey
-        });
+        // 1. Embed the user's question
+        const embeddings = new GoogleGenerativeAIEmbeddings({ apiKey, model: "text-embedding-004" });
+        const [queryVector] = await embeddings.embedDocuments([query]);
 
-        // Gemini natively supports PDF reading directly (via Langchain media type)
-        const base64Data = buffer.toString("base64");
+        // 2. Fetch all chunks for this document
+        const chunks = await prisma.chunk.findMany({ where: { documentId } });
+        if (chunks.length === 0) {
+            return NextResponse.json({ answer: "I don't have this document indexed yet." });
+        }
+
+        // 3. Rank by cosine similarity, take top 5
+        const ranked = chunks
+            .map((c) => ({ content: c.content, score: cosineSimilarity(queryVector, c.embedding) }))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5);
+
+        const context = ranked.map((r) => r.content).join("\n\n---\n\n");
+
+        // 4. Call Gemini with only the retrieved chunks, not the whole PDF
+        const llm = new ChatGoogleGenerativeAI({ model: "gemini-2.5-flash", maxOutputTokens: 2048, apiKey });
 
         const systemMsg = new SystemMessage(
-            "You are an intelligent PDF analyst. Use the provided document to accurately answer the user's question. Only use information found in the document context. If the information is not present in the context, clearly state that you cannot find it in the document."
+            "You are an intelligent PDF analyst. Use ONLY the provided context to answer the user's question. If the answer isn't in the context, say you cannot find it in the document."
         );
-
-        const humanMsg = new HumanMessage({
-            content: [
-                {
-                    type: "text",
-                    text: query
-                },
-                {
-                    type: "image_url",
-                    image_url: {
-                        url: `data:application/pdf;base64,${base64Data}`
-                    }
-                }
-            ]
-        });
+        const humanMsg = new HumanMessage(`Context:\n${context}\n\nQuestion: ${query}`);
 
         const response = await llm.invoke([systemMsg, humanMsg]);
 

@@ -14,7 +14,9 @@ type Message = {
 export default function Dashboard({ user, onLogout }: { user: any; onLogout: () => void }) {
     const [pdfFile, setPdfFile] = useState<File | null>(null);
     const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+    const [documentId, setDocumentId] = useState<string | null>(null);
     const [showMobilePdf, setShowMobilePdf] = useState(false);
+    const [isIndexing, setIsIndexing] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
 
@@ -98,7 +100,7 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
         });
     };
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
             if (file.type !== "application/pdf") {
@@ -108,14 +110,29 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
             setPdfFile(file);
             setPdfUrl(URL.createObjectURL(file));
             setShowMobilePdf(false);
-            setMessages([{ role: "ai", text: `Scanned **"${file.name}"**. What would you like to know?` }]);
+            setMessages([{ role: "ai", text: `Indexing **"${file.name}"**...` }]);
             requestAnimationFrame(() => runScanSweep());
+
+            setIsIndexing(true);
+            try {
+                const formData = new FormData();
+                formData.append("file", file);
+                const res = await fetch("/api/upload", { method: "POST", body: formData });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+                setDocumentId(data.documentId);
+                setMessages([{ role: "ai", text: `Scanned **"${file.name}"**. What would you like to know?` }]);
+            } catch (err) {
+                setMessages([{ role: "ai", text: "Failed to index this PDF. Please try again." }]);
+            } finally {
+                setIsIndexing(false);
+            }
         }
     };
 
     const handleQuerySubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!query.trim() || !pdfFile) return;
+        if (!query.trim() || !pdfFile || !documentId) return;
 
         const userMessage = query.trim();
         setMessages((prev) => [...prev, { role: "user", text: userMessage }]);
@@ -123,13 +140,12 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
         setIsTyping(true);
 
         try {
-            const formData = new FormData();
-            formData.append("file", pdfFile);
-            formData.append("query", userMessage);
-
-            const res = await fetch("/api/chat", { method: "POST", body: formData });
+            const res = await fetch("/api/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ documentId, query: userMessage }),
+            });
             if (!res.ok) throw new Error("Failed to get response");
-
             const data = await res.json();
             setMessages((prev) => [...prev, { role: "ai", text: data.answer }]);
         } catch (error) {
@@ -344,14 +360,14 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
                                 className="input-field"
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
-                                disabled={!pdfFile || isTyping}
-                                style={{ borderRadius: "24px", opacity: !pdfFile ? 0.5 : 1 }}
+                                disabled={!pdfFile || isTyping || isIndexing || !documentId}
+                                style={{ borderRadius: "24px", opacity: !pdfFile || isIndexing || !documentId ? 0.5 : 1 }}
                             />
                             <button
                                 type="submit"
                                 className="btn-primary"
-                                disabled={!pdfFile || isTyping || !query.trim()}
-                                style={{ borderRadius: "50%", padding: "12px", opacity: !pdfFile || isTyping || !query.trim() ? 0.5 : 1 }}
+                                disabled={!pdfFile || isTyping || !query.trim() || isIndexing || !documentId}
+                                style={{ borderRadius: "50%", padding: "12px", opacity: !pdfFile || isTyping || !query.trim() || isIndexing || !documentId ? 0.5 : 1 }}
                             >
                                 <Send size={18} />
                             </button>
