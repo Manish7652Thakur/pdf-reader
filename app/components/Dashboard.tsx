@@ -1,10 +1,139 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
-import { LogOut, UploadCloud, FileText, Send, ScanLine, Menu, X, Highlighter } from "lucide-react";
+import { LogOut, UploadCloud, FileText, Send, ScanLine, Menu, X, Highlighter, CheckCircle2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import gsap from "gsap";
+
+// ─── Indexing Loading Overlay ────────────────────────────────────────────────
+const INDEXING_STEPS = ["Parsing pages", "Chunking text", "Embedding chunks", "Storing vectors"];
+
+function IndexingLoader({ active }: { active: boolean }) {
+    const barRef = useRef<HTMLDivElement>(null);
+    const glowRef = useRef<HTMLDivElement>(null);
+    const stepRef = useRef<HTMLSpanElement>(null);
+    const stepTween = useRef<gsap.core.Tween | null>(null);
+    const stepIndex = useRef(0);
+
+    useEffect(() => {
+        if (!active) return;
+
+        // Indeterminate progress bar
+        if (barRef.current) {
+            gsap.killTweensOf(barRef.current);
+            gsap.set(barRef.current, { scaleX: 0, transformOrigin: "left" });
+            gsap.to(barRef.current, { scaleX: 1, duration: 3.5, ease: "power1.inOut", repeat: -1, yoyo: true });
+        }
+        if (glowRef.current) {
+            gsap.killTweensOf(glowRef.current);
+            gsap.to(glowRef.current, { x: "200%", duration: 1.4, ease: "power2.inOut", repeat: -1, repeatDelay: 0.4 });
+        }
+
+        // Cycle step labels
+        stepIndex.current = 0;
+        const cycleStep = () => {
+            if (!stepRef.current) return;
+            stepIndex.current = (stepIndex.current + 1) % INDEXING_STEPS.length;
+            gsap.fromTo(stepRef.current,
+                { autoAlpha: 0, y: 8 },
+                { autoAlpha: 1, y: 0, duration: 0.4, ease: "power2.out" }
+            );
+            if (stepRef.current) stepRef.current.textContent = INDEXING_STEPS[stepIndex.current];
+        };
+        // Init first label
+        if (stepRef.current) {
+            stepRef.current.textContent = INDEXING_STEPS[0];
+            gsap.set(stepRef.current, { autoAlpha: 1, y: 0 });
+        }
+        stepTween.current = gsap.delayedCall(0.85, function loop() {
+            cycleStep();
+            stepTween.current = gsap.delayedCall(0.85, loop);
+        });
+
+        return () => {
+            gsap.killTweensOf(barRef.current);
+            gsap.killTweensOf(glowRef.current);
+            stepTween.current?.kill();
+        };
+    }, [active]);
+
+    if (!active) return null;
+
+    return (
+        <div style={{
+            display: "flex", flexDirection: "column", gap: "10px",
+            padding: "14px 20px",
+            background: "linear-gradient(135deg, rgba(var(--scan-rgb,120,200,120),0.07), transparent)",
+            borderRadius: "20px",
+            border: "1px solid rgba(var(--scan-rgb,120,200,120),0.18)",
+            backdropFilter: "blur(4px)",
+        }}>
+            {/* Step label */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{
+                    display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+                    background: "var(--scan)",
+                    boxShadow: "0 0 8px var(--scan)",
+                    animation: "pulse-dot 1.2s ease-in-out infinite",
+                }} />
+                <span
+                    ref={stepRef}
+                    style={{ fontSize: "0.78rem", fontFamily: "var(--font-mono)", color: "var(--scan)", letterSpacing: "0.05em" }}
+                />
+                <span style={{ fontSize: "0.78rem", fontFamily: "var(--font-mono)", color: "var(--muted)", marginLeft: "auto" }}>Indexing…</span>
+            </div>
+
+            {/* Progress bar track */}
+            <div style={{
+                position: "relative", height: 4, borderRadius: 4,
+                background: "rgba(var(--scan-rgb,120,200,120),0.12)",
+                overflow: "hidden",
+            }}>
+                {/* Moving bar */}
+                <div ref={barRef} style={{
+                    position: "absolute", inset: 0,
+                    background: "linear-gradient(90deg, transparent, var(--scan), transparent)",
+                    borderRadius: 4,
+                }} />
+                {/* Glow sweep */}
+                <div ref={glowRef} style={{
+                    position: "absolute", top: 0, left: "-100%", width: "60%", height: "100%",
+                    background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent)",
+                    borderRadius: 4,
+                }} />
+            </div>
+        </div>
+    );
+}
+
+function ReadyFlash({ show }: { show: boolean }) {
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!show || !ref.current) return;
+        gsap.fromTo(ref.current,
+            { autoAlpha: 0, scale: 0.88, y: 10 },
+            { autoAlpha: 1, scale: 1, y: 0, duration: 0.5, ease: "back.out(1.8)" }
+        );
+        const t = setTimeout(() => {
+            if (ref.current) gsap.to(ref.current, { autoAlpha: 0, y: -6, duration: 0.35, delay: 1.8 });
+        }, 0);
+        return () => clearTimeout(t);
+    }, [show]);
+    if (!show) return null;
+    return (
+        <div ref={ref} style={{
+            display: "flex", alignItems: "center", gap: "8px",
+            padding: "10px 16px", borderRadius: "20px",
+            background: "rgba(var(--scan-rgb,120,200,120),0.12)",
+            border: "1px solid var(--scan)",
+            fontSize: "0.82rem", fontFamily: "var(--font-mono)", color: "var(--scan)",
+        }}>
+            <CheckCircle2 size={15} />
+            Document indexed — ready!
+        </div>
+    );
+}
 
 type Message = {
     role: "user" | "ai";
@@ -19,6 +148,7 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
     const [isIndexing, setIsIndexing] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
+    const [showReadyFlash, setShowReadyFlash] = useState(false);
 
     const [chatWidth, setChatWidth] = useState(400);
     const isResizing = useRef(false);
@@ -114,6 +244,7 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
             requestAnimationFrame(() => runScanSweep());
 
             setIsIndexing(true);
+            setShowReadyFlash(false);
             try {
                 const formData = new FormData();
                 formData.append("file", file);
@@ -122,6 +253,8 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
                 if (!res.ok) throw new Error(data.error);
                 setDocumentId(data.documentId);
                 setMessages([{ role: "ai", text: `Scanned **"${file.name}"**. What would you like to know?` }]);
+                setShowReadyFlash(true);
+                setTimeout(() => setShowReadyFlash(false), 3000);
             } catch (err) {
                 setMessages([{ role: "ai", text: "Failed to index this PDF. Please try again." }]);
             } finally {
@@ -352,16 +485,50 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
                         <div ref={messagesEndRef} />
                     </div>
 
-                    <div style={{ padding: "20px", borderTop: "1px solid var(--line)" }}>
+                    <div style={{ padding: "16px 20px 20px", borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: "10px" }}>
+                        <style dangerouslySetInnerHTML={{
+                            __html: `
+                            @keyframes pulse-dot {
+                                0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--scan); }
+                                50% { opacity: 0.4; box-shadow: 0 0 3px var(--scan); }
+                            }
+                            @keyframes shimmer-slide {
+                                0% { background-position: -200% center; }
+                                100% { background-position: 200% center; }
+                            }
+                            .input-shimmer {
+                                background: linear-gradient(90deg,
+                                    rgba(var(--scan-rgb,120,200,120),0.04) 25%,
+                                    rgba(var(--scan-rgb,120,200,120),0.13) 50%,
+                                    rgba(var(--scan-rgb,120,200,120),0.04) 75%
+                                );
+                                background-size: 200% 100%;
+                                animation: shimmer-slide 1.8s ease-in-out infinite;
+                            }
+                        ` }} />
+
+                        {/* Indexing loader sits above input */}
+                        <IndexingLoader active={isIndexing} />
+                        <ReadyFlash show={showReadyFlash} />
+
                         <form onSubmit={handleQuerySubmit} style={{ display: "flex", gap: "12px" }}>
                             <input
                                 type="text"
-                                placeholder={pdfFile ? "Ask a question…" : "Upload a PDF first…"}
-                                className="input-field"
+                                placeholder={
+                                    isIndexing ? "Indexing, please wait…"
+                                        : pdfFile ? "Ask a question…"
+                                            : "Upload a PDF first…"
+                                }
+                                className={`input-field${isIndexing ? " input-shimmer" : ""}`}
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
                                 disabled={!pdfFile || isTyping || isIndexing || !documentId}
-                                style={{ borderRadius: "24px", opacity: !pdfFile || isIndexing || !documentId ? 0.5 : 1 }}
+                                style={{
+                                    borderRadius: "24px",
+                                    opacity: !pdfFile || isIndexing || !documentId ? 0.65 : 1,
+                                    transition: "opacity 0.4s ease, border-color 0.4s ease",
+                                    borderColor: isIndexing ? "var(--scan)" : undefined,
+                                }}
                             />
                             <button
                                 type="submit"

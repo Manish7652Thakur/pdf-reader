@@ -8,6 +8,7 @@
   --paper: #f3eee3;
   --paper-dim: #cdc6b4;
   --scan: #7c5cff;
+  --scan-rgb: 124, 92, 255;
   --scan-soft: rgba(124, 92, 255, 0.16);
   --scan-glow: rgba(124, 92, 255, 0.55);
   --highlight: #ffd23f;
