@@ -528,6 +528,7 @@ export default function Dashboard({ user, onLogout }: { user: any; onLogout: () 
                                     opacity: !pdfFile || isIndexing || !documentId ? 0.65 : 1,
                                     transition: "opacity 0.4s ease, border-color 0.4s ease",
                                     borderColor: isIndexing ? "var(--scan)" : undefined,
+                                    cursor: isIndexing ? "wait" : undefined,
                                 }}
                             />
                             <button
